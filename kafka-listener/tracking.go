@@ -1,4 +1,4 @@
-package model
+package main
 
 type TrackingRecord struct {
 	ID         string  `json:"id"`

@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"time"
-	"tracking_event/model"
 )
 
 var (
@@ -53,17 +52,17 @@ func handleMain(w http.ResponseWriter, r *http.Request) {
 	for _, bucketDate := range bucketDates {
 
 		// Generate multiple events within the list
-		var events []model.Event
+		var events []Event
 		count := rand.Intn(100) + 1
 		for i := 0; i < count; i++ {
-			events = append(events, model.Event{
+			events = append(events, Event{
 				ID:        fmt.Sprintf("evt%d", i+1),
 				TimeStamp: time.Now().Unix(),
 				Status:    randomStatus(),
 			})
 		}
 
-		tracking := model.TrackingRecord{
+		tracking := TrackingRecord{
 			StoreId:    storeID,
 			UserId:     clientID,
 			BucketDate: bucketDate.Unix(),

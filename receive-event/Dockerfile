@@ -25,5 +25,8 @@ COPY --from=builder /app/main /app/main
 # Copy the .env file
 COPY .env /app/.env
 
+# Expose port 8081 to the outside world
+EXPOSE 8081
+
 # Command to run the executable
-CMD ["/app/main"]
+CMD ["./main"]

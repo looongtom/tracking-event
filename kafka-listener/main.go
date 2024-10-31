@@ -17,7 +17,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"tracking_event/model"
 )
 
 var (
@@ -26,7 +25,7 @@ var (
 	kafkaBroker string
 )
 
-func updateEvent(event model.Event) (*model.Event, error) {
+func updateEvent(event Event) (*Event, error) {
 	url := fmt.Sprintf("%s:%s/update-event", os.Getenv("SERVER_HOST"), os.Getenv("SERVER_PORT_UPDATE_EVENT"))
 	method := "POST"
 
@@ -58,7 +57,7 @@ func updateEvent(event model.Event) (*model.Event, error) {
 
 	}
 
-	var response model.Event
+	var response Event
 	err = json.Unmarshal(body, &response)
 	if err != nil {
 		fmt.Println(err)
@@ -67,7 +66,7 @@ func updateEvent(event model.Event) (*model.Event, error) {
 	return &response, nil
 }
 
-func saveEventInDb(eventChan chan model.Event, tracking model.TrackingRecord) error {
+func saveEventInDb(eventChan chan Event, tracking TrackingRecord) error {
 	clientOptions := options.Client().ApplyURI(fmt.Sprintf("mongodb://%s", os.Getenv("MONGO_URI")))
 	client, err := mongo.Connect(context.Background(), clientOptions)
 	if err != nil {
@@ -87,7 +86,7 @@ func saveEventInDb(eventChan chan model.Event, tracking model.TrackingRecord) er
 
 	for event := range eventChan {
 		wg.Add(1)
-		go func(event model.Event) {
+		go func(event Event) {
 			defer wg.Done()
 			filter := bson.M{
 				"store_id":    tracking.StoreId,
@@ -183,7 +182,7 @@ func main() {
 			switch e := ev.(type) {
 			case *kafka.Message:
 				// Process the consumed message
-				var tracking model.TrackingRecord
+				var tracking TrackingRecord
 				err := json.Unmarshal(e.Value, &tracking)
 				if err != nil {
 					fmt.Printf("Failed to deserialize message: %s\n", err)
@@ -193,11 +192,11 @@ func main() {
 
 				var wg sync.WaitGroup
 				errChan := make(chan error, len(tracking.ListEvent))
-				eventChan := make(chan model.Event, len(tracking.ListEvent))
+				eventChan := make(chan Event, len(tracking.ListEvent))
 
 				for _, event := range tracking.ListEvent {
 					wg.Add(1)
-					go func(event model.Event) {
+					go func(event Event) {
 						defer wg.Done()
 						// Update the status of the event
 						event.Status = "updated"
