@@ -1,32 +1,33 @@
 # Use the official Golang image to create a build artifact.
-FROM golang:1.23 as builder
+FROM golang:1.20-alpine AS builder
 
-# Set the Current Working Directory inside the container
+RUN apk add --no-cache gcc musl-dev libc6-compat librdkafka-dev
+
 WORKDIR /app
 
-# Copy go mod and sum files
 COPY go.mod go.sum ./
-
-# Download all dependencies. Dependencies will be cached if the go.mod and go.sum files are not changed
 RUN go mod download
 
-# Copy the source from the current directory to the Working Directory inside the container
 COPY . .
 
-# Build the Go app
-RUN go build -o main .
+ENV CGO_ENABLED=1 \
+    GOOS=linux \
+    GOARCH=amd64
 
-# Start a new stage from scratch
-FROM debian:buster
+RUN go build -o app -tags musl .
 
-# Copy the Pre-built binary file from the previous stage
-COPY --from=builder /app/main /app/main
-
-# Copy the .env file
 COPY .env /app/.env
 
 # Expose port 8081 to the outside world
 EXPOSE 8081
 
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates libc6-compat librdkafka gcc
+
+# Copy the built binary from the builder stage
+COPY --from=builder /app/app /app/app
+COPY --from=builder /app/.env /app/.env
+
 # Command to run the executable
-CMD ["./main"]
+CMD ["/app/app"]

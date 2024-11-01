@@ -10,6 +10,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"io"
+	"kafka-listener/model"
 	"log"
 	"net/http"
 	"os"
@@ -25,8 +26,8 @@ var (
 	kafkaBroker string
 )
 
-func updateEvent(event Event) (*Event, error) {
-	url := fmt.Sprintf("%s:%s/update-event", os.Getenv("SERVER_HOST"), os.Getenv("SERVER_PORT_UPDATE_EVENT"))
+func updateEvent(event model.Event) (*model.Event, error) {
+	url := fmt.Sprintf("http://%s:%s/update-event", os.Getenv("SERVER_HOST"), os.Getenv("SERVER_PORT_UPDATE_EVENT"))
 	method := "POST"
 
 	timestamp := time.Unix(event.TimeStamp, 0).Unix()
@@ -57,7 +58,7 @@ func updateEvent(event Event) (*Event, error) {
 
 	}
 
-	var response Event
+	var response model.Event
 	err = json.Unmarshal(body, &response)
 	if err != nil {
 		fmt.Println(err)
@@ -66,7 +67,7 @@ func updateEvent(event Event) (*Event, error) {
 	return &response, nil
 }
 
-func saveEventInDb(eventChan chan Event, tracking TrackingRecord) error {
+func saveEventInDb(eventChan chan model.Event, tracking model.TrackingRecord) error {
 	clientOptions := options.Client().ApplyURI(fmt.Sprintf("mongodb://%s", os.Getenv("MONGO_URI")))
 	client, err := mongo.Connect(context.Background(), clientOptions)
 	if err != nil {
@@ -86,7 +87,7 @@ func saveEventInDb(eventChan chan Event, tracking TrackingRecord) error {
 
 	for event := range eventChan {
 		wg.Add(1)
-		go func(event Event) {
+		go func(event model.Event) {
 			defer wg.Done()
 			filter := bson.M{
 				"store_id":    tracking.StoreId,
@@ -122,7 +123,7 @@ func saveEventInDb(eventChan chan Event, tracking TrackingRecord) error {
 }
 
 func main() {
-	err := godotenv.Load()
+	err := godotenv.Load("/app/.env")
 	if err != nil {
 		log.Fatal("Error loading .env file")
 		return
@@ -182,7 +183,7 @@ func main() {
 			switch e := ev.(type) {
 			case *kafka.Message:
 				// Process the consumed message
-				var tracking TrackingRecord
+				var tracking model.TrackingRecord
 				err := json.Unmarshal(e.Value, &tracking)
 				if err != nil {
 					fmt.Printf("Failed to deserialize message: %s\n", err)
@@ -192,11 +193,11 @@ func main() {
 
 				var wg sync.WaitGroup
 				errChan := make(chan error, len(tracking.ListEvent))
-				eventChan := make(chan Event, len(tracking.ListEvent))
+				eventChan := make(chan model.Event, len(tracking.ListEvent))
 
 				for _, event := range tracking.ListEvent {
 					wg.Add(1)
-					go func(event Event) {
+					go func(event model.Event) {
 						defer wg.Done()
 						// Update the status of the event
 						event.Status = "updated"

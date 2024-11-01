@@ -12,6 +12,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"receive-event/model"
 	"time"
 )
 
@@ -52,17 +53,17 @@ func handleMain(w http.ResponseWriter, r *http.Request) {
 	for _, bucketDate := range bucketDates {
 
 		// Generate multiple events within the list
-		var events []Event
+		var events []model.Event
 		count := rand.Intn(100) + 1
 		for i := 0; i < count; i++ {
-			events = append(events, Event{
+			events = append(events, model.Event{
 				ID:        fmt.Sprintf("evt%d", i+1),
 				TimeStamp: time.Now().Unix(),
 				Status:    randomStatus(),
 			})
 		}
 
-		tracking := TrackingRecord{
+		tracking := model.TrackingRecord{
 			StoreId:    storeID,
 			UserId:     clientID,
 			BucketDate: bucketDate.Unix(),
@@ -93,7 +94,7 @@ func handleMain(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	//read .env file
-	err := godotenv.Load()
+	err := godotenv.Load("/app/.env")
 	if err != nil {
 		log.Fatal("Error loading .env file")
 		return

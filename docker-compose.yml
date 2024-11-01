@@ -1,21 +1,72 @@
 services:
+  kafka-zookeeper:
+    container_name: kafka-zookeeper
+    image: "bitnami/zookeeper:3.8.4"
+    ports:
+      - "2181:2181"
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    networks:
+      - custom_network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'       # Limit Zookeeper to 0.25 CPU
+          memory: 128M       # Limit Zookeeper to 128 MB
+        reservations:
+          cpus: '0.1'        # Reserve 0.1 CPU
+          memory: 64M        # Reserve 64 MB of memory
+
+  kafka-broker:
+    container_name: kafka-brooker
+    image: "bitnami/kafka:3.3.2"
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      - KAFKA_BROKER_ID=1
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=kafka-zookeeper:2181
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CLIENT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      - KAFKA_CFG_LISTENERS=CLIENT://:9092,EXTERNAL://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=CLIENT://kafka-broker:9092,EXTERNAL://localhost:9093
+      - KAFKA_INTER_BROKER_LISTENER_NAME=CLIENT
+    depends_on:
+      - kafka-zookeeper
+    networks:
+      - custom_network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'        # Limit Kafka to 0.5 CPU
+          memory: 384M       # Limit Kafka to 384 MB
+        reservations:
+          cpus: '0.25'       # Reserve 0.25 CPU
+          memory: 192M       # Reserve 192 MB
+
+
   receive-event:
     build:
       context: ./receive-event
       dockerfile: Dockerfile
     container_name: receive-event
     ports:
-      - "8080:8080"
-    environment:
-      - KAFKA_BROKER=kafka:9092
-      - MONGO_URI=mongodb://mongo:27017
+      - "8081:8081"
     depends_on:
-      - kafka
+      - kafka-broker
       - mongo
     networks:
       - custom_network
     env_file:
       - .env
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'       # Limit receive-event to 0.25 CPU
+          memory: 128M       # Limit receive-event to 128 MB
+        reservations:
+          cpus: '0.1'        # Reserve 0.1 CPU
+          memory: 64M        # Reserve 64 MB
 
   upload-event:
     build:
@@ -23,68 +74,66 @@ services:
       dockerfile: Dockerfile
     container_name: upload-event
     ports:
-      - "8081:8081"
-    environment:
-      - KAFKA_BROKER=kafka:9092
-      - MONGO_URI=mongodb://mongo:27017
+      - "8080:8080"
     depends_on:
-      - kafka
+      - kafka-broker
       - mongo
     networks:
       - custom_network
     env_file:
       - .env
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'       # Limit upload-event to 0.25 CPU
+          memory: 128M       # Limit upload-event to 128 MB
+        reservations:
+          cpus: '0.1'        # Reserve 0.1 CPU
+          memory: 64M        # Reserve 64 MB
 
   kafka-listener:
     build:
       context: ./kafka-listener
       dockerfile: Dockerfile
     container_name: kafka-listener
-    environment:
-      - KAFKA_BROKER=kafka:9092
-      - MONGO_URI=mongodb://mongo:27017
     depends_on:
-      - kafka
+      - kafka-broker
       - mongo
+      - upload-event
     networks:
       - custom_network
     env_file:
       - .env
-
-  kafka:
-    image: confluentinc/cp-kafka:latest
-    container_name: kafka
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-    depends_on:
-      - zookeeper
-    networks:
-      - custom_network
-
-  zookeeper:
-    image: confluentinc/cp-zookeeper:latest
-    container_name: zookeeper
-    ports:
-      - "2181:2181"
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    networks:
-      - custom_network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'       # Limit kafka-listener to 0.25 CPU
+          memory: 128M       # Limit kafka-listener to 128 MB
+        reservations:
+          cpus: '0.1'        # Reserve 0.1 CPU
+          memory: 64M        # Reserve 64 MB
 
   mongo:
     image: mongo:latest
     container_name: mongo
     ports:
-      - "27017:27017"
+      - "2717:27017"
     networks:
       - custom_network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'       # Limit MongoDB to 0.25 CPU
+          memory: 256M       # Limit MongoDB to 256 MB
+        reservations:
+          cpus: '0.1'        # Reserve 0.1 CPU
+          memory: 128M       # Reserve 128 MB
+
+volumes:
+  kafka-volume:
+  zookeeper-volume:
 
 networks:
   custom_network:
     driver: bridge
+
