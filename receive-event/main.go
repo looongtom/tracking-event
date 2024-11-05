@@ -1,13 +1,9 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/confluentinc/confluent-kafka-go/kafka"
-	"github.com/joho/godotenv"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 	"log"
 	"math/rand"
 	"net/http"
@@ -23,15 +19,6 @@ var (
 func handleMain(w http.ResponseWriter, r *http.Request) {
 	// log current time
 	fmt.Println(time.Now())
-
-	// Replace with your MongoDB connection details
-	clientOptions := options.Client().ApplyURI(fmt.Sprintf("mongodb://%s", os.Getenv("MONGO_URI")))
-	client, err := mongo.Connect(context.Background(), clientOptions)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer client.Disconnect(context.Background())
 
 	// Create a new Kafka producer
 	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": kafkaBroker})
@@ -92,14 +79,10 @@ func handleMain(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	//read .env file
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
-		return
-	}
 	kafkaBroker = os.Getenv("KAFKA_BROKER")
 	topic = os.Getenv("KAFKA_TOPIC")
+	fmt.Println("Kafka Broker: ", kafkaBroker)
+	fmt.Println("Kafka Topic: ", topic)
 
 	http.HandleFunc("/receive-event", handleMain)
 	fmt.Println(fmt.Sprintf("Server is listening on port %v...", os.Getenv("SERVER_PORT_RECEIVE_EVENT")))

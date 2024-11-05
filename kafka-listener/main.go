@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/confluentinc/confluent-kafka-go/kafka"
-	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -26,7 +25,7 @@ var (
 )
 
 func updateEvent(event Event) (*Event, error) {
-	url := fmt.Sprintf("%s:%s/update-event", os.Getenv("SERVER_HOST"), os.Getenv("SERVER_PORT_UPDATE_EVENT"))
+	url := fmt.Sprintf("%s:%s/update-event", os.Getenv("SERVER_HOST_UPDATE_EVENT"), os.Getenv("SERVER_PORT_UPDATE_EVENT"))
 	method := "POST"
 
 	timestamp := time.Unix(event.TimeStamp, 0).Unix()
@@ -122,15 +121,12 @@ func saveEventInDb(eventChan chan Event, tracking TrackingRecord) error {
 }
 
 func main() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
-		return
-	}
-
 	kafkaBroker = os.Getenv("KAFKA_BROKER")
 	topic = os.Getenv("KAFKA_TOPIC")
 	groupID = os.Getenv("KAFKA_GROUP_ID")
+	fmt.Println("Kafka Broker: ", kafkaBroker)
+	fmt.Println("Kafka Topic: ", topic)
+	fmt.Println("Kafka Group ID: ", groupID)
 
 	kafkaBrokerServer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": kafkaBroker})
 	if err != nil {
