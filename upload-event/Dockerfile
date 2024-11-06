@@ -22,7 +22,7 @@ RUN go build -ldflags="-s -w" -o apiserver .
 COPY .env /app/.env
 
 # Expose port 8080 to the outside world
-EXPOSE 8080
+EXPOSE 8083
 
 # Command to run the executable
 CMD ["./apiserver"]

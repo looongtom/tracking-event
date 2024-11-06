@@ -15,3 +15,12 @@ type Event struct {
 	TimeStamp int64  `json:"timestamp"`
 	Status    string `json:"status"`
 }
+
+type TrackingEvent struct {
+	StoreId    string `json:"store_id"`
+	UserId     string `json:"client_id"`
+	BucketDate int64  `json:"bucket_date"`
+	EventType  string `json:"event_type"`
+	Count      int    `json:"count"`
+	Event      Event  `json:"event"`
+}

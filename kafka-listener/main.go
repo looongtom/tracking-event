@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/confluentinc/confluent-kafka-go/kafka"
-	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -16,7 +15,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -27,7 +25,7 @@ var (
 )
 
 func updateEvent(event model.Event) (*model.Event, error) {
-	url := fmt.Sprintf("http://%s:%s/update-event", os.Getenv("SERVER_HOST"), os.Getenv("SERVER_PORT_UPDATE_EVENT"))
+	url := fmt.Sprintf("%s:%s/update-event", os.Getenv("SERVER_HOST_UPDATE_EVENT"), os.Getenv("SERVER_PORT_UPDATE_EVENT"))
 	method := "POST"
 
 	timestamp := time.Unix(event.TimeStamp, 0).Unix()
@@ -67,7 +65,10 @@ func updateEvent(event model.Event) (*model.Event, error) {
 	return &response, nil
 }
 
-func saveEventInDb(eventChan chan model.Event, tracking model.TrackingRecord) error {
+func saveEventInDb(updatedEvent *model.Event, tracking model.TrackingEvent) error {
+	if updatedEvent == nil {
+		return fmt.Errorf("event is nil")
+	}
 	clientOptions := options.Client().ApplyURI(fmt.Sprintf("mongodb://%s", os.Getenv("MONGO_URI")))
 	client, err := mongo.Connect(context.Background(), clientOptions)
 	if err != nil {
@@ -83,55 +84,47 @@ func saveEventInDb(eventChan chan model.Event, tracking model.TrackingRecord) er
 	db := client.Database(os.Getenv("MONGO_DB"))
 	collection := db.Collection(os.Getenv("MONGO_COLLECTION"))
 	//insert event in db
-	var wg sync.WaitGroup
-
-	for event := range eventChan {
-		wg.Add(1)
-		go func(event model.Event) {
-			defer wg.Done()
-			filter := bson.M{
-				"store_id":    tracking.StoreId,
-				"client_id":   tracking.UserId,
-				"bucket_date": tracking.BucketDate,
-				"event_type":  tracking.EventType,
-			}
-			update := bson.M{
-				"$set": bson.M{
-					"store_id":    tracking.StoreId,
-					"client_id":   tracking.UserId,
-					"bucket_date": tracking.BucketDate,
-					"event_type":  tracking.EventType,
-					"count":       bson.M{"$sum": []interface{}{"$count", tracking.Count}}},
-				"$push": bson.M{
-					"list_event": bson.M{
-						"event_id":           event.ID,
-						"timestamp":          event.TimeStamp,
-						"status_destination": event.Status,
-					},
-				},
-			}
-			opts := options.Update().SetUpsert(true)
-			_, err := collection.UpdateOne(context.Background(), filter, update, opts)
-			if err != nil {
-				log.Printf("Error upserting document: %v", err)
-			}
-		}(event)
+	filter := bson.M{
+		"store_id":    tracking.StoreId,
+		"client_id":   tracking.UserId,
+		"bucket_date": tracking.BucketDate,
+		"event_type":  tracking.EventType,
 	}
-	wg.Wait()
-
+	update := bson.M{
+		"$setOnInsert": bson.M{
+			"store_id":    tracking.StoreId,
+			"client_id":   tracking.UserId,
+			"bucket_date": tracking.BucketDate,
+			"event_type":  tracking.EventType,
+		},
+		"$inc": bson.M{
+			"count": tracking.Count, // Increment the count field by 1
+		},
+		"$push": bson.M{
+			"list_event": bson.M{
+				"event_id":           updatedEvent.ID,
+				"timestamp":          updatedEvent.TimeStamp,
+				"status_destination": updatedEvent.Status,
+			},
+		},
+	}
+	opts := options.Update().SetUpsert(true)
+	resp, err := collection.UpdateOne(context.Background(), filter, update, opts)
+	if err != nil {
+		log.Printf("Error upserting document: %v", err)
+		return err
+	}
+	fmt.Println(fmt.Sprintf("Response: %v", resp))
 	return nil
 }
 
 func main() {
-	err := godotenv.Load("/app/.env")
-	if err != nil {
-		log.Fatal("Error loading .env file")
-		return
-	}
-
 	kafkaBroker = os.Getenv("KAFKA_BROKER")
 	topic = os.Getenv("KAFKA_TOPIC")
 	groupID = os.Getenv("KAFKA_GROUP_ID")
+	fmt.Println("Kafka Broker: ", kafkaBroker)
+	fmt.Println("Kafka Topic: ", topic)
+	fmt.Println("Kafka Group ID: ", groupID)
 
 	kafkaBrokerServer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": kafkaBroker})
 	if err != nil {
@@ -183,7 +176,7 @@ func main() {
 			switch e := ev.(type) {
 			case *kafka.Message:
 				// Process the consumed message
-				var tracking model.TrackingRecord
+				var tracking model.TrackingEvent
 				err := json.Unmarshal(e.Value, &tracking)
 				if err != nil {
 					fmt.Printf("Failed to deserialize message: %s\n", err)
@@ -191,43 +184,17 @@ func main() {
 				}
 				fmt.Printf("Received booking: %+v\n", tracking)
 
-				var wg sync.WaitGroup
-				errChan := make(chan error, len(tracking.ListEvent))
-				eventChan := make(chan model.Event, len(tracking.ListEvent))
-
-				for _, event := range tracking.ListEvent {
-					wg.Add(1)
-					go func(event model.Event) {
-						defer wg.Done()
-						// Update the status of the event
-						event.Status = "updated"
-						response, err := updateEvent(event)
-						if err != nil {
-							errChan <- fmt.Errorf("failed to update event: %w", err)
-							return
-						}
-						fmt.Printf("Updated event status: %v\n", *response)
-						fmt.Println(time.Now())
-						eventChan <- *response
-						errChan <- nil
-					}(event)
-				}
-
-				wg.Wait()
-				close(errChan)
-				close(eventChan)
-
-				for err := range errChan {
-					if err != nil {
-						fmt.Println(err)
-					}
-				}
-
-				err = saveEventInDb(eventChan, tracking)
+				updatedEvent, err := updateEvent(tracking.Event)
 				if err != nil {
 					fmt.Println(err)
 				}
 
+				err = saveEventInDb(updatedEvent, tracking)
+				if err != nil {
+					fmt.Println(err)
+				}
+				fmt.Println(time.Now())
+				fmt.Println("===========================Message consumed successfully!=============================")
 			case kafka.Error:
 				// Handle Kafka errors
 				fmt.Printf("Error: %v\n", e)

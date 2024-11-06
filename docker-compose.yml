@@ -1,21 +1,14 @@
 services:
   kafka-zookeeper:
+    image: confluentinc/cp-zookeeper:latest
     container_name: kafka-zookeeper
-    image: "bitnami/zookeeper:3.8.4"
     ports:
       - "2181:2181"
     environment:
-      - ALLOW_ANONYMOUS_LOGIN=yes
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
     networks:
       - custom_network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.25'       # Limit Zookeeper to 0.25 CPU
-          memory: 128M       # Limit Zookeeper to 128 MB
-        reservations:
-          cpus: '0.1'        # Reserve 0.1 CPU
-          memory: 64M        # Reserve 64 MB of memory
 
   kafka-broker:
     container_name: kafka-brooker
@@ -35,15 +28,14 @@ services:
       - kafka-zookeeper
     networks:
       - custom_network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'        # Limit Kafka to 0.5 CPU
-          memory: 384M       # Limit Kafka to 384 MB
-        reservations:
-          cpus: '0.25'       # Reserve 0.25 CPU
-          memory: 192M       # Reserve 192 MB
 
+  mongo:
+    image: mongo:latest
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    networks:
+      - custom_network
 
   receive-event:
     build:
@@ -54,19 +46,19 @@ services:
       - "8081:8081"
     depends_on:
       - kafka-broker
-      - mongo
     networks:
       - custom_network
-    env_file:
-      - .env
-    deploy:
-      resources:
-        limits:
-          cpus: '0.25'       # Limit receive-event to 0.25 CPU
-          memory: 128M       # Limit receive-event to 128 MB
-        reservations:
-          cpus: '0.1'        # Reserve 0.1 CPU
-          memory: 64M        # Reserve 64 MB
+    environment:
+      - KAFKA_BROKER=kafka-broker:9092
+      - KAFKA_TOPIC=tracking-event
+      - SERVER_PORT_RECEIVE_EVENT=8081
+      - STORE_ID=store2
+      - CLIENT_ID=client2
+      - EVENT_TYPE=add_to_cart
+      - MAX_AMOUNT_EVENT=100
+      - TOTAL_STORE=5
+      - TOTAL_CLIENT=5
+      - TOTAL_EVENT_TYPE=5
 
   upload-event:
     build:
@@ -74,66 +66,101 @@ services:
       dockerfile: Dockerfile
     container_name: upload-event
     ports:
-      - "8080:8080"
+      - "8083:8083"
+    environment:
+      - MONGO_URI=mongodb://mongo:27017
+      - SERVER_PORT_UPDATE_EVENT=8083
     depends_on:
       - kafka-broker
-      - mongo
     networks:
       - custom_network
-    env_file:
-      - .env
-    deploy:
-      resources:
-        limits:
-          cpus: '0.25'       # Limit upload-event to 0.25 CPU
-          memory: 128M       # Limit upload-event to 128 MB
-        reservations:
-          cpus: '0.1'        # Reserve 0.1 CPU
-          memory: 64M        # Reserve 64 MB
 
   kafka-listener:
     build:
       context: ./kafka-listener
       dockerfile: Dockerfile
     container_name: kafka-listener
+    environment:
+      - KAFKA_BROKER=kafka-broker:9092
+      - KAFKA_TOPIC=tracking-event
+      - KAFKA_GROUP_ID=tracking-event-group
+      - MONGO_URI=mongo:27017
+      - SERVER_HOST_UPDATE_EVENT=http://upload-event
+      - SERVER_PORT_UPDATE_EVENT=8083
+      - MONGO_DB=test
+      - MONGO_COLLECTION=tracking_event
     depends_on:
       - kafka-broker
       - mongo
       - upload-event
     networks:
       - custom_network
-    env_file:
-      - .env
-    deploy:
-      resources:
-        limits:
-          cpus: '0.25'       # Limit kafka-listener to 0.25 CPU
-          memory: 128M       # Limit kafka-listener to 128 MB
-        reservations:
-          cpus: '0.1'        # Reserve 0.1 CPU
-          memory: 64M        # Reserve 64 MB
 
-  mongo:
-    image: mongo:latest
-    container_name: mongo
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
     ports:
-      - "2717:27017"
-    networks:
-      - custom_network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.25'       # Limit MongoDB to 0.25 CPU
-          memory: 256M       # Limit MongoDB to 256 MB
-        reservations:
-          cpus: '0.1'        # Reserve 0.1 CPU
-          memory: 128M       # Reserve 128 MB
+      - "9090:9090"
+    volumes:
+      - /mnt/d/kienletv/prometheus-grafana/prometheus:/etc/prometheus
+      - prometheus-data:/prometheus
+    #    sudo mount --make-rshared /
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      - 'GF_SMTP_ENABLED=true'
+      - 'GF_SMTP_HOST=smtp.gmail.com:587'
+      - 'GF_SMTP_USER=user1@gmail.com'
+      - 'GF_SMTP_PASSWORD=mysamplePassword'
+      - 'GF_SMTP_FROM_ADDRESS=user1@gmail.com'
+    #      - 'GF_SERVER_DOMAIN=grafana.my.domain'
+    #      - 'GF_SERVER_ROOT_URL=grafana.my.domain'
+    restart: unless-stopped
+
+  node_exporter:
+    image: quay.io/prometheus/node-exporter:latest
+    container_name: node_exporter
+    command:
+      - '--path.rootfs=/host'
+    pid: host
+    restart: unless-stopped
+    volumes:
+      - '/proc:/host/proc:ro'
+      - '/sys:/host/sys:ro'
+      - '/:/host:ro,rslave'
+
+
+  cadvisor:
+    image: google/cadvisor:latest
+    container_name: cadvisor
+    # ports:
+    #   - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg
 
 volumes:
   kafka-volume:
   zookeeper-volume:
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
 
 networks:
   custom_network:
     driver: bridge
-
