@@ -55,7 +55,7 @@ services:
       - STORE_ID=store2
       - CLIENT_ID=client2
       - EVENT_TYPE=add_to_cart
-      - MAX_AMOUNT_EVENT=100
+      - MAX_AMOUNT_EVENT=2000
       - TOTAL_STORE=5
       - TOTAL_CLIENT=5
       - TOTAL_EVENT_TYPE=5

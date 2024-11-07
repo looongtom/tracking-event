@@ -24,13 +24,14 @@ var (
 	kafkaBroker string
 )
 
-func updateEvent(event model.Event) (*model.Event, error) {
+func updateEvent(trackingEvent model.EventRecordRequestV3) (*model.EventRecordRequestV3, error) {
 	url := fmt.Sprintf("%s:%s/update-event", os.Getenv("SERVER_HOST_UPDATE_EVENT"), os.Getenv("SERVER_PORT_UPDATE_EVENT"))
 	method := "POST"
 
-	timestamp := time.Unix(event.TimeStamp, 0).Unix()
-
-	payload := strings.NewReader(fmt.Sprintf(`{"event_id": "%s", "timestamp": %d, "status": "%s"}`, event.ID, timestamp, event.Status))
+	payload := strings.NewReader(
+		fmt.Sprintf(`{"client_id": "%s","store_id": "%s","bucket_date": "%s","event":{"event_type": "%s","timestamp": %d}}`,
+			trackingEvent.ClientID, trackingEvent.StoreID, trackingEvent.BucketDate, trackingEvent.EventDetail.EventType, trackingEvent.EventDetail.Timestamp))
+	fmt.Println("Payload: ", payload)
 
 	client := &http.Client{}
 	req, err := http.NewRequest(method, url, payload)
@@ -56,19 +57,72 @@ func updateEvent(event model.Event) (*model.Event, error) {
 
 	}
 
-	var response model.Event
+	var response model.EventRecordRequestV3
 	err = json.Unmarshal(body, &response)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("error unmarshal", err)
 		return nil, err
 	}
 	return &response, nil
 }
 
-func saveEventInDb(updatedEvent *model.Event, tracking model.TrackingEvent) error {
-	if updatedEvent == nil {
+func saveEventInDb(client *mongo.Client, trackingEvent *model.EventRecordRequestV3) error {
+	if trackingEvent == nil {
 		return fmt.Errorf("event is nil")
 	}
+	db := client.Database(os.Getenv("MONGO_DB"))
+	collection := db.Collection(os.Getenv("MONGO_COLLECTION"))
+
+	event := model.EventDetails{
+		EventID:   trackingEvent.EventDetail.EventID,
+		Timestamp: trackingEvent.EventDetail.Timestamp,
+		EventType: trackingEvent.EventDetail.EventType,
+	}
+	//upsert event in db
+	filter := bson.M{
+		"store_id":    trackingEvent.StoreID,
+		"client_id":   trackingEvent.ClientID,
+		"bucket_date": trackingEvent.BucketDate,
+	}
+
+	var update bson.M
+	if trackingEvent.Status == "success" {
+		update = bson.M{
+			"$push": bson.M{"list_success": event},
+			"$setOnInsert": bson.M{
+				"client_id":   trackingEvent.ClientID,
+				"store_id":    trackingEvent.StoreID,
+				"bucket_date": trackingEvent.BucketDate,
+			},
+		}
+	} else {
+		update = bson.M{
+			"$push": bson.M{"list_failure": event},
+			"$setOnInsert": bson.M{
+				"client_id":   trackingEvent.ClientID,
+				"store_id":    trackingEvent.StoreID,
+				"bucket_date": trackingEvent.BucketDate,
+			},
+		}
+	}
+
+	// Perform the upsert operation
+	opts := options.Update().SetUpsert(true)
+	_, err := collection.UpdateOne(context.Background(), filter, update, opts)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func main() {
+	kafkaBroker = os.Getenv("KAFKA_BROKER")
+	topic = os.Getenv("KAFKA_TOPIC")
+	groupID = os.Getenv("KAFKA_GROUP_ID")
+	fmt.Println("Kafka Broker: ", kafkaBroker)
+	fmt.Println("Kafka Topic: ", topic)
+	fmt.Println("Kafka Group ID: ", groupID)
+
 	clientOptions := options.Client().ApplyURI(fmt.Sprintf("mongodb://%s", os.Getenv("MONGO_URI")))
 	client, err := mongo.Connect(context.Background(), clientOptions)
 	if err != nil {
@@ -80,51 +134,6 @@ func saveEventInDb(updatedEvent *model.Event, tracking model.TrackingEvent) erro
 			log.Fatalln(err.Error())
 		}
 	}(client, context.Background())
-
-	db := client.Database(os.Getenv("MONGO_DB"))
-	collection := db.Collection(os.Getenv("MONGO_COLLECTION"))
-	//insert event in db
-	filter := bson.M{
-		"store_id":    tracking.StoreId,
-		"client_id":   tracking.UserId,
-		"bucket_date": tracking.BucketDate,
-		"event_type":  tracking.EventType,
-	}
-	update := bson.M{
-		"$setOnInsert": bson.M{
-			"store_id":    tracking.StoreId,
-			"client_id":   tracking.UserId,
-			"bucket_date": tracking.BucketDate,
-			"event_type":  tracking.EventType,
-		},
-		"$inc": bson.M{
-			"count": tracking.Count, // Increment the count field by 1
-		},
-		"$push": bson.M{
-			"list_event": bson.M{
-				"event_id":           updatedEvent.ID,
-				"timestamp":          updatedEvent.TimeStamp,
-				"status_destination": updatedEvent.Status,
-			},
-		},
-	}
-	opts := options.Update().SetUpsert(true)
-	resp, err := collection.UpdateOne(context.Background(), filter, update, opts)
-	if err != nil {
-		log.Printf("Error upserting document: %v", err)
-		return err
-	}
-	fmt.Println(fmt.Sprintf("Response: %v", resp))
-	return nil
-}
-
-func main() {
-	kafkaBroker = os.Getenv("KAFKA_BROKER")
-	topic = os.Getenv("KAFKA_TOPIC")
-	groupID = os.Getenv("KAFKA_GROUP_ID")
-	fmt.Println("Kafka Broker: ", kafkaBroker)
-	fmt.Println("Kafka Topic: ", topic)
-	fmt.Println("Kafka Group ID: ", groupID)
 
 	kafkaBrokerServer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": kafkaBroker})
 	if err != nil {
@@ -176,7 +185,7 @@ func main() {
 			switch e := ev.(type) {
 			case *kafka.Message:
 				// Process the consumed message
-				var tracking model.TrackingEvent
+				var tracking model.EventRecordRequestV3
 				err := json.Unmarshal(e.Value, &tracking)
 				if err != nil {
 					fmt.Printf("Failed to deserialize message: %s\n", err)
@@ -184,12 +193,12 @@ func main() {
 				}
 				fmt.Printf("Received booking: %+v\n", tracking)
 
-				updatedEvent, err := updateEvent(tracking.Event)
+				updatedEvent, err := updateEvent(tracking)
 				if err != nil {
 					fmt.Println(err)
 				}
 
-				err = saveEventInDb(updatedEvent, tracking)
+				err = saveEventInDb(client, updatedEvent)
 				if err != nil {
 					fmt.Println(err)
 				}
