@@ -158,17 +158,18 @@ func generateMockData(nStores, mEventTypes, mEvents, nClients int, bucketDate ti
 			eventType := eventTypes[rand.Intn(mEventTypes)]
 			eventID := fmt.Sprintf("evt%d", i+1)
 			timestamp := bucketDate.Add(time.Duration(rand.Intn(24)) * time.Hour).Add(time.Duration(rand.Intn(60)) * time.Minute)
-			status := []string{"success", "failed"}[rand.Intn(2)]
 
-			sentEvent := model.EventRecord{
-				ID:                eventID,
-				ClientID:          clientID,
-				StoreID:           storeID,
-				EventType:         eventType,
-				StatusDestination: status,
-				EventID:           eventID,
-				Timestamp:         timestamp.Unix(),
-				BucketDate:        bucketDate.Format("02-01-2006"),
+			detailEvent := model.EventDetails{
+				EventID:   eventID,
+				Timestamp: timestamp.Unix(),
+				EventType: eventType,
+			}
+
+			sentEvent := model.EventRecordRequestV3{
+				ClientID:    clientID,
+				StoreID:     storeID,
+				BucketDate:  bucketDate.Format("02-01-2006"),
+				EventDetail: detailEvent,
 			}
 			serializedBookingRequest, err := json.Marshal(sentEvent)
 			if err != nil {
