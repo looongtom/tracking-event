@@ -19,77 +19,9 @@ var (
 	topic       string
 )
 
-func generateMockData(nStores, mEventTypes, mEvents, nClients int, bucketDate time.Time, p *kafka.Producer) error {
-
-	storePrefix := "store"
-	clientPrefix := "client"
-	eventTypes := make([]string, mEventTypes)
-	for i := 0; i < mEventTypes; i++ {
-		eventTypes[i] = fmt.Sprintf("event_type%d", i+1)
-	}
-
-	var wg sync.WaitGroup
-
-	errChan := make(chan error, mEvents)
-
-	for i := 0; i < mEvents; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			indexStore := rand.Intn(nStores) + 1
-			storeID := fmt.Sprintf("%s%d", storePrefix, indexStore)
-			indexClient := rand.Intn(nClients) + 1
-			clientID := fmt.Sprintf("%s%d", clientPrefix, indexClient)
-			eventType := eventTypes[rand.Intn(mEventTypes)]
-			eventID := fmt.Sprintf("evt%d", i+1)
-			timestamp := bucketDate.Add(time.Duration(rand.Intn(24)) * time.Hour).Add(time.Duration(rand.Intn(60)) * time.Minute)
-			status := []string{"success", "failed"}[rand.Intn(2)]
-
-			event := model.Event{
-				ID:        eventID,
-				TimeStamp: timestamp.Unix(),
-				Status:    status,
-			}
-			trackingEvent := model.TrackingEvent{
-				StoreId:    storeID,
-				UserId:     clientID,
-				BucketDate: bucketDate.UnixNano(),
-				EventType:  eventType,
-				Count:      1,
-				Event:      event,
-			}
-			serializedBookingRequest, err := json.Marshal(trackingEvent)
-			if err != nil {
-				//http.Error(w, fmt.Sprintf("Failed to serialize booking request: %s", err), http.StatusInternalServerError)
-				errChan <- fmt.Errorf("Failed to serialize booking request: %s", err)
-				return
-			}
-
-			// Produce the message to the Kafka topic
-			err = produceMessage(p, topic, serializedBookingRequest)
-			if err != nil {
-				//http.Error(w, fmt.Sprintf("Failed to produce message: %s", err), http.StatusInternalServerError)
-				errChan <- fmt.Errorf("Failed to produce message: %s", err)
-				return
-			}
-
-			errChan <- nil
-		}(i)
-	}
-	wg.Wait()
-	close(errChan)
-	for err := range errChan {
-		if err != nil {
-			return err
-		}
-	}
-	fmt.Println("===========================Message produced successfully!=============================")
-	return nil
-}
-
 func handleMain(w http.ResponseWriter, r *http.Request) {
 	// log current time
-	fmt.Println(time.Now())
+	fmt.Println("start time:", time.Now())
 
 	// Create a new Kafka producer
 	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": kafkaBroker})
@@ -112,15 +44,15 @@ func handleMain(w http.ResponseWriter, r *http.Request) {
 
 		// Generate multiple events within the list
 		maxCount := os.Getenv("MAX_AMOUNT_EVENT")
-		maxValue, ok := strconv.Atoi(maxCount)
+		count, ok := strconv.Atoi(maxCount)
 		if ok != nil {
 			fmt.Println("Error: ", ok)
 			fmt.Println("set max value into 10")
-			maxValue = 10
+			count = 10
 		}
-		errChan := make(chan error, maxValue)
-		fmt.Println("Count: ", maxValue)
-		for i := 0; i < maxValue; i++ {
+		errChan := make(chan error, count)
+		fmt.Println("Count: ", count)
+		for i := 0; i < count; i++ {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
@@ -174,7 +106,7 @@ func handleMain(w http.ResponseWriter, r *http.Request) {
 
 func handleMainV2(w http.ResponseWriter, r *http.Request) {
 	// log current time
-	fmt.Println(time.Now())
+	fmt.Println("start time:", time.Now())
 
 	// Create a new Kafka producer
 	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": kafkaBroker})
@@ -202,11 +134,80 @@ func handleMainV2(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Main function executed successfully"))
 }
 
+func generateMockData(nStores, mEventTypes, mEvents, nClients int, bucketDate time.Time, p *kafka.Producer) error {
+
+	storePrefix := "store"
+	clientPrefix := "client"
+	eventTypes := make([]string, mEventTypes)
+	for i := 0; i < mEventTypes; i++ {
+		eventTypes[i] = fmt.Sprintf("event_type%d", i+1)
+	}
+
+	var wg sync.WaitGroup
+
+	errChan := make(chan error, mEvents)
+
+	for i := 0; i < mEvents; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			indexStore := rand.Intn(nStores) + 1
+			storeID := fmt.Sprintf("%s%d", storePrefix, indexStore)
+			indexClient := rand.Intn(nClients) + 1
+			clientID := fmt.Sprintf("%s%d", clientPrefix, indexClient)
+			eventType := eventTypes[rand.Intn(mEventTypes)]
+			eventID := fmt.Sprintf("evt%d", i+1)
+			timestamp := bucketDate.Add(time.Duration(rand.Intn(24)) * time.Hour).Add(time.Duration(rand.Intn(60)) * time.Minute)
+			status := []string{"success", "failed"}[rand.Intn(2)]
+
+			sentEvent := model.EventRecord{
+				ID:                eventID,
+				ClientID:          clientID,
+				StoreID:           storeID,
+				EventType:         eventType,
+				StatusDestination: status,
+				EventID:           eventID,
+				Timestamp:         timestamp.Unix(),
+				BucketDate:        bucketDate.Format("02-01-2006"),
+			}
+			serializedBookingRequest, err := json.Marshal(sentEvent)
+			if err != nil {
+				//http.Error(w, fmt.Sprintf("Failed to serialize booking request: %s", err), http.StatusInternalServerError)
+				errChan <- fmt.Errorf("Failed to serialize booking request: %s", err)
+				return
+			}
+
+			// Produce the message to the Kafka topic
+			err = produceMessage(p, topic, serializedBookingRequest)
+			if err != nil {
+				//http.Error(w, fmt.Sprintf("Failed to produce message: %s", err), http.StatusInternalServerError)
+				errChan <- fmt.Errorf("Failed to produce message: %s", err)
+				return
+			}
+
+			errChan <- nil
+		}(i)
+	}
+	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		if err != nil {
+			return err
+		}
+	}
+	fmt.Println("===========================Message produced successfully!=============================")
+	return nil
+}
+
 func main() {
+	//err := godotenv.Load("/app/.env")
+	//err := godotenv.Load(".env")
+	//if err != nil {
+	//	log.Fatal("Error loading .env file")
+	//	return
+	//}
 	kafkaBroker = os.Getenv("KAFKA_BROKER")
 	topic = os.Getenv("KAFKA_TOPIC")
-	fmt.Println("Kafka Broker: ", kafkaBroker)
-	fmt.Println("Kafka Topic: ", topic)
 
 	http.HandleFunc("/receive-event", handleMain)
 	http.HandleFunc("/receive-event-v2", handleMainV2)

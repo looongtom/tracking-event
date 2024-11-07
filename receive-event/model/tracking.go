@@ -23,3 +23,14 @@ type TrackingEvent struct {
 	Count      int    `json:"count"`
 	Event      Event  `json:"event"`
 }
+
+type EventRecord struct {
+	ID                string `json:"_id"`
+	ClientID          string `json:"client_id"`
+	StoreID           string `json:"store_id"`
+	EventType         string `json:"event_type"`
+	StatusDestination string `json:"status_destination"`
+	EventID           string `json:"event_id"`
+	Timestamp         int64  `json:"timestamp"`
+	BucketDate        string `json:"bucket_date"`
+}
