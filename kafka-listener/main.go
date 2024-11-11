@@ -115,6 +115,63 @@ func saveEventInDb(client *mongo.Client, trackingEvent *model.EventRecordRequest
 	return nil
 }
 
+func createTopicIfNotExists(admin *kafka.AdminClient, topic string) {
+	metadata, err := admin.GetMetadata(&topic, false, 5000)
+	if err != nil {
+		log.Fatalf("Failed to get metadata: %s", err)
+	}
+
+	if _, exists := metadata.Topics[topic]; exists {
+		fmt.Printf("Topic %s already exists\n", topic)
+		return
+	}
+
+	topics := []kafka.TopicSpecification{{
+		Topic:             topic,
+		NumPartitions:     1,
+		ReplicationFactor: 1,
+	}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	results, err := admin.CreateTopics(ctx, topics)
+	if err != nil {
+		log.Fatalf("Failed to create topic: %s", err)
+	}
+
+	for _, result := range results {
+		if result.Error.Code() != kafka.ErrNoError {
+			log.Fatalf("Failed to create topic %s: %v\n", result.Topic, result.Error)
+		}
+		fmt.Printf("Topic %s created successfully\n", result.Topic)
+	}
+}
+
+func checkAndCreateCollection(client *mongo.Client, dbName, collectionName string) (bool, error) {
+	// List collections in the database
+	db := client.Database(dbName)
+	collections, err := db.ListCollectionNames(context.TODO(), map[string]interface{}{})
+	if err != nil {
+		return false, fmt.Errorf("failed to list collections: %w", err)
+	}
+
+	// Check if the collection already exists
+	for _, col := range collections {
+		if col == collectionName {
+			return true, nil
+		}
+	}
+
+	// Create the collection if it doesn't exist
+	err = db.CreateCollection(context.TODO(), collectionName)
+	if err != nil {
+		return false, fmt.Errorf("failed to create collection: %w", err)
+	}
+
+	return false, nil
+}
+
 func main() {
 	kafkaBroker = os.Getenv("KAFKA_BROKER")
 	topic = os.Getenv("KAFKA_TOPIC")
@@ -134,6 +191,29 @@ func main() {
 			log.Fatalln(err.Error())
 		}
 	}(client, context.Background())
+
+	dbName := os.Getenv("MONGO_DB")
+	collectionName := os.Getenv("MONGO_COLLECTION")
+
+	collectionExists, err := checkAndCreateCollection(client, dbName, collectionName)
+	if err != nil {
+		log.Fatalf("Failed to check or create collection: %s", err)
+	}
+
+	if collectionExists {
+		fmt.Printf("Collection %s already exists in database %s\n", collectionName, dbName)
+	} else {
+		fmt.Printf("Collection %s created in database %s\n", collectionName, dbName)
+	}
+
+	adminClient, err := kafka.NewAdminClient(&kafka.ConfigMap{"bootstrap.servers": kafkaBroker})
+	if err != nil {
+		log.Fatalf("Failed to create Admin client: %s", err)
+	}
+	defer adminClient.Close()
+
+	// Check if topic exists and create if not
+	createTopicIfNotExists(adminClient, topic)
 
 	kafkaBrokerServer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": kafkaBroker})
 	if err != nil {
